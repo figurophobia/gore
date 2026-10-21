@@ -48,17 +48,20 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
       - name: Package
-        shell: bash
+        if: runner.os != 'Windows'
         working-directory: target/${{ matrix.target }}/release
         run: |
           mkdir -p package
-          cp gore package/${{ matrix.archive }}${{ startsWith(matrix.target, 'windows') && '.exe' || '' }}
-          cd package
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            zip -r ../${{ matrix.archive }}.zip .
-          else
-            tar czf ../${{ matrix.archive }}.tar.gz .
-          fi
+          cp gore package/${{ matrix.archive }}
+          tar czf ${{ matrix.archive }}.tar.gz -C package .
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: target/${{ matrix.target }}/release
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item gore "package/${{ matrix.archive }}.exe"
+          Compress-Archive -Path package/* -DestinationPath "${{ matrix.archive }}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: gore-${{ matrix.archive }}

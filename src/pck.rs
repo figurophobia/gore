@@ -234,6 +234,12 @@ pub struct Pck {
 impl Pck {
     /// Reads the file table. `key` is required when the directory is encrypted.
     pub fn open(data: &[u8], header: PckHeader, key: Option<&[u8; KEY_LEN]>) -> Result<Pck> {
+        if header.flags & PACK_SPARSE_BUNDLE != 0 {
+            bail!(
+                "this pack uses the sparse bundle format, which is not supported yet \
+                 (recover it with GDRE Tools directly)"
+            );
+        }
         let dir = header.dir_offset as usize;
         if dir + 4 > data.len() {
             bail!("directory offset out of range");
