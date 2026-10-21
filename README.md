@@ -152,8 +152,8 @@ the scan short; the whole file is searched if that fails.
 
 ## What `gore` understands
 
-* **Pack formats** v2, v3 and v4 (Godot 4.x). v1 (Godot 3.x) headers are detected; give the key
-  with `--key` for those.
+* **Pack formats** v1 (Godot 3.x), v2, v3 and v4 (Godot 4.x). Encrypted packs need the key;
+  `gore` finds it on its own in the usual cases.
 * **Containers**: standalone `.pck`, packs appended to an executable, packs embedded in a PE
   section (the `pck` section of self contained Windows builds), and `.apk` files (the `assets`
   folder is scanned).

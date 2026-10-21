@@ -120,7 +120,10 @@ pub fn extract(
             raw.to_vec()
         };
 
-        if content.len() as u64 != entry.size || crypto::md5(&content) != entry.md5 {
+        // Godot 3.x packs do not store a real MD5 (it is left empty), so it is only
+        // checked when the pack actually provides one.
+        let has_md5 = entry.md5.iter().any(|&b| b != 0);
+        if has_md5 && (content.len() as u64 != entry.size || crypto::md5(&content) != entry.md5) {
             stats.checksum_errors.push(entry.path.clone());
         }
 

@@ -68,6 +68,26 @@ impl PckHeader {
         let engine_major = u32::from_le_bytes(data[s + 8..s + 12].try_into()?);
         let engine_minor = u32::from_le_bytes(data[s + 12..s + 16].try_into()?);
         let engine_patch = u32::from_le_bytes(data[s + 16..s + 20].try_into()?);
+
+        // v1 (Godot 3.x) has neither flags nor a file base: the header is followed by
+        // 16 reserved u32 and then the file count.
+        if format_version == PACK_FORMAT_V1 {
+            let dir_offset = start + 20 + 64;
+            if dir_offset + 4 > file_len {
+                bail!("directory offset {dir_offset} is outside the file (size {file_len})");
+            }
+            return Ok(PckHeader {
+                start,
+                format_version,
+                engine_major,
+                engine_minor,
+                engine_patch,
+                flags: 0,
+                file_base: 0,
+                dir_offset,
+            });
+        }
+
         let flags = u32::from_le_bytes(data[s + 20..s + 24].try_into()?);
         let raw_file_base = u64::from_le_bytes(data[s + 24..s + 32].try_into()?);
 
@@ -234,21 +254,28 @@ impl Pck {
         };
 
         let mut cursor = 0usize;
-        let mut entries = Vec::with_capacity(file_count as usize);
+        // Guard against a corrupted file count asking for a huge allocation.
+        let capacity = (file_count as usize).min(table.len() / 32 + 1);
+        let mut entries = Vec::with_capacity(capacity);
+        // v1 (Godot 3.x) entries have no flags field and their path is not padded.
+        let legacy = header.format_version == PACK_FORMAT_V1;
         for _ in 0..file_count {
             if cursor + 4 > table.len() {
                 bail!("file table truncated after {} entries", entries.len());
             }
             let len = u32::from_le_bytes(table[cursor..cursor + 4].try_into()?) as usize;
             cursor += 4;
-            if cursor + len + 8 + 8 + 16 + 4 > table.len() {
+            let entry_len = 8 + 8 + 16 + if legacy { 0 } else { 4 };
+            if cursor + len + entry_len > table.len() {
                 bail!("file table entry {cursor} is truncated");
             }
             let mut raw = &table[cursor..cursor + len];
             cursor += len;
-            // The path is zero padded to a multiple of 4 bytes.
-            while raw.last() == Some(&0) {
-                raw = &raw[..raw.len() - 1];
+            // In v2+ the path is zero padded to a multiple of 4 bytes.
+            if !legacy {
+                while raw.last() == Some(&0) {
+                    raw = &raw[..raw.len() - 1];
+                }
             }
             let path = String::from_utf8_lossy(raw).to_string();
             let offset = u64::from_le_bytes(table[cursor..cursor + 8].try_into()?);
@@ -257,8 +284,13 @@ impl Pck {
             let mut md5 = [0u8; 16];
             md5.copy_from_slice(&table[cursor..cursor + 16]);
             cursor += 16;
-            let flags = u32::from_le_bytes(table[cursor..cursor + 4].try_into()?);
-            cursor += 4;
+            let flags = if legacy {
+                0
+            } else {
+                let f = u32::from_le_bytes(table[cursor..cursor + 4].try_into()?);
+                cursor += 4;
+                f
+            };
             entries.push(PckEntry {
                 path,
                 offset,

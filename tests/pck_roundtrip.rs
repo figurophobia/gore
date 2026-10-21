@@ -168,6 +168,50 @@ fn finds_the_key_hidden_in_a_binary() {
 }
 
 #[test]
+fn extracts_a_godot_3_pack() {
+    // v1 (Godot 3.x): magic, version 1, engine version, 16 reserved u32, file count and
+    // entries without a flags field.
+    let mut pack: Vec<u8> = Vec::new();
+    pack.extend_from_slice(&PACK_MAGIC.to_le_bytes());
+    pack.extend_from_slice(&1u32.to_le_bytes()); // format version
+    pack.extend_from_slice(&3u32.to_le_bytes()); // engine major
+    pack.extend_from_slice(&5u32.to_le_bytes()); // engine minor
+    pack.extend_from_slice(&3u32.to_le_bytes()); // engine patch
+    for _ in 0..16 {
+        pack.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    }
+    // The file count and the entries come right after the header, the file data follows.
+    pack.extend_from_slice(&1u32.to_le_bytes()); // file count
+    let path = b"res://main.gd";
+    pack.extend_from_slice(&(path.len() as u32).to_le_bytes());
+    pack.extend_from_slice(path);
+    let offset_field = pack.len();
+    pack.extend_from_slice(&0u64.to_le_bytes()); // offset, patched below
+    let content = b"extends Node3D\n";
+    pack.extend_from_slice(&(content.len() as u64).to_le_bytes());
+    // Godot 3.x leaves the MD5 empty.
+    pack.extend_from_slice(&[0u8; 16]);
+    let data_offset = pack.len() as u64;
+    pack[offset_field..offset_field + 8].copy_from_slice(&data_offset.to_le_bytes());
+    pack.extend_from_slice(content);
+
+    let start = locate(&pack).expect("the pack must be found");
+    let header = PckHeader::parse(&pack, start, pack.len() as u64).unwrap();
+    assert_eq!(header.format_version, 1);
+    assert_eq!(header.engine_major, 3);
+    let opened = Pck::open(&pack, header, None).unwrap();
+    assert_eq!(opened.entries.len(), 1);
+    assert_eq!(opened.entries[0].path, "res://main.gd");
+    assert_eq!(opened.entries[0].offset, data_offset);
+
+    let dir = tempfile::tempdir().unwrap();
+    let stats = gore::extract::extract(&pack, &opened, dir.path(), None).unwrap();
+    assert_eq!(stats.written, 1);
+    assert!(stats.checksum_errors.is_empty());
+    assert_eq!(std::fs::read(dir.path().join("main.gd")).unwrap(), content);
+}
+
+#[test]
 fn rejects_a_file_that_is_not_a_pack() {
     let data = vec![0u8; 1024];
     assert!(locate(&data).is_none());
