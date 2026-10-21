@@ -106,6 +106,17 @@ Recover from a `.pck` whose key lives in the neighbouring executable (the usual 
 gore recover game.pck -o ./game_project
 ```
 
+A game that ships a DLC as a **second pack** needs both merged. Extract each pack into the
+same directory (the DLC last, so it overwrites) and recover that directory:
+
+```bash
+gore extract game.pck      -o ./merged
+gore extract dlc.pck       -o ./merged
+gore recover ./merged      -o ./game_project
+```
+
+`gore recover` warns you when it sees other `.pck` files next to the one you passed.
+
 Just unpack the raw contents, without touching GDRE:
 
 ```bash
@@ -166,6 +177,8 @@ the scan short; the whole file is searched if that fails.
 |---|---|---|---|---|
 | SNAPTIC Demo | 4.7.1 | v4 | yes | key recovered automatically, 7756 files verified |
 | Lucid Blocks | 4.6.0 | v3 | no | 5951 files verified |
+| Buckshot Roulette | 4.1.1 | v2 | no | self contained exe, 3572 files verified |
+| Brotato | 3.7.0 | v1 | no | base pack + DLC pack merged, 9285 files verified |
 
 Godot 3.x games (`v1` packs) and Godot 2.x games (`v0` packs) are supported too: they are not
 encrypted, so there is no key to look for.

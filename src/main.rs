@@ -83,7 +83,8 @@ enum Command {
     },
     /// Recover the full Godot project (needs GDRE Tools)
     Recover {
-        /// The game file
+        /// The game file, or an already extracted pack directory (handy to merge
+        /// a base pack with a DLC shipped as a separate pack)
         file: PathBuf,
         /// Only print the command that would be run
         #[arg(long)]
@@ -124,6 +125,12 @@ struct Game {
 
 impl Game {
     fn open(path: &Path) -> Result<Game> {
+        if path.is_dir() {
+            bail!(
+                "{} is a directory (only `gore recover` accepts an extracted project directory)",
+                path.display()
+            );
+        }
         let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
         let len = file.metadata()?.len();
         if len == 0 {
@@ -287,31 +294,52 @@ fn cmd_extract(cli: &Cli, file: &Path) -> Result<()> {
 }
 
 fn cmd_recover(cli: &Cli, file: &Path, dry_run: bool) -> Result<()> {
-    let game = Game::open(file)?;
-    let out = cli
-        .out
-        .clone()
-        .unwrap_or_else(|| default_out(&game.path, "recovered"));
-    let key = match cli.key.as_deref().and_then(parse_key) {
-        Some(k) => Some(k),
-        None => {
-            if game.header.dir_encrypted() {
-                eprintln!("* directory is encrypted, recovering the key...");
-                recover_key(cli, &game)?
-            } else {
-                None
-            }
-        }
-    };
     let gdre_path = gdre::locate(cli.gdre.as_deref()).ok_or_else(|| {
         anyhow::anyhow!(
             "GDRE Tools was not found. Install it with `gore setup` or point at it with --gdre."
         )
     })?;
 
+    // A directory is already an unpacked project. This is what you want when a
+    // game ships extra packs (a DLC, for instance): extract every pack into the
+    // same directory, later packs overwriting earlier ones, and recover that.
+    let (target, key) = if file.is_dir() {
+        (file.to_path_buf(), None)
+    } else {
+        let game = Game::open(file)?;
+        let key = match cli.key.as_deref().and_then(parse_key) {
+            Some(k) => Some(k),
+            None => {
+                if game.header.dir_encrypted() {
+                    eprintln!("* directory is encrypted, recovering the key...");
+                    recover_key(cli, &game)?
+                } else {
+                    None
+                }
+            }
+        };
+        (game.path.clone(), key)
+    };
+
+    let out = cli
+        .out
+        .clone()
+        .unwrap_or_else(|| default_out(&target, "recovered"));
+
+    if !file.is_dir() {
+        if let Some(siblings) = sibling_packs(&target) {
+            eprintln!("* other packs next to this one: {}", siblings.join(", "));
+            eprintln!(
+                "* a DLC shipped as a separate pack is not part of this one; extract both into \
+                 the same directory (later packs overwrite earlier ones) and run \
+                 `gore recover <dir>` to get the complete project"
+            );
+        }
+    }
+
     let mut args: Vec<String> = vec![
         "--headless".to_string(),
-        format!("--recover={}", game.path.display()),
+        format!("--recover={}", target.display()),
     ];
     if let Some(k) = key.as_ref() {
         args.push(format!("--key={}", crypto::format_hex_key(k)));
@@ -328,6 +356,31 @@ fn cmd_recover(cli: &Cli, file: &Path, dry_run: bool) -> Result<()> {
     gdre::run(&gdre_path, &args)?;
     eprintln!("* project recovered into {}", out.display());
     Ok(())
+}
+
+/// Other `.pck` files shipped next to `target` (a DLC distributed as its own pack).
+fn sibling_packs(target: &Path) -> Option<Vec<String>> {
+    let dir = target.parent()?;
+    let stem = target.file_stem()?.to_string_lossy().to_lowercase();
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("pck"))
+        })
+        .filter(|e| {
+            e.path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase() != stem)
+                .unwrap_or(false)
+        })
+        .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+        .collect();
+    names.sort();
+    (!names.is_empty()).then_some(names)
 }
 
 fn cmd_setup(cli: &Cli, dir: Option<PathBuf>) -> Result<()> {
