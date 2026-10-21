@@ -152,8 +152,8 @@ the scan short; the whole file is searched if that fails.
 
 ## What `gore` understands
 
-* **Pack formats** v1 (Godot 3.x), v2, v3 and v4 (Godot 4.x). Encrypted packs need the key;
-  `gore` finds it on its own in the usual cases.
+* **Pack formats** v0 (Godot 2.x), v1 (Godot 3.x), v2, v3 and v4 (Godot 4.x). Encrypted packs need the
+  key; `gore` finds it on its own in the usual cases.
 * **Containers**: standalone `.pck`, packs appended to an executable, packs embedded in a PE
   section (the `pck` section of self contained Windows builds).
 * **Encryption**: encrypted file tables and individually encrypted files, AES-256-CFB, with the
@@ -167,8 +167,8 @@ the scan short; the whole file is searched if that fails.
 | SNAPTIC Demo | 4.7.1 | v4 | yes | key recovered automatically, 7756 files verified |
 | Lucid Blocks | 4.6.0 | v3 | no | 5951 files verified |
 
-Godot 3.x games (`v1` packs) are supported too: they are not encrypted, so there is no key to
-look for.
+Godot 3.x games (`v1` packs) and Godot 2.x games (`v0` packs) are supported too: they are not
+encrypted, so there is no key to look for.
 
 ---
 

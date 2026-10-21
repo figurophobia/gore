@@ -163,10 +163,15 @@ fn cmd_info(cli: &Cli, file: &Path, no_key: bool) -> Result<()> {
     );
     println!("pack offset      {}", header.start);
     println!("pack version     v{}", header.format_version);
-    println!(
-        "engine version   {}.{}.{}",
-        header.engine_major, header.engine_minor, header.engine_patch
-    );
+    if header.format_version == pck::PACK_FORMAT_V0 {
+        // Godot 2.x leaves the engine version fields empty.
+        println!("engine version   2.x (legacy)");
+    } else {
+        println!(
+            "engine version   {}.{}.{}",
+            header.engine_major, header.engine_minor, header.engine_patch
+        );
+    }
     println!("flags            {:#06x}", header.flags);
     println!("  dir encrypted  {}", header.dir_encrypted());
     println!("  rel file base  {}", header.rel_filebase());

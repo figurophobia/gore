@@ -212,6 +212,89 @@ fn extracts_a_godot_3_pack() {
 }
 
 #[test]
+fn extracts_a_godot_2_pack() {
+    // v0 (Godot 2.x): same layout as v1 but with the version and the engine fields empty.
+    let mut pack: Vec<u8> = Vec::new();
+    pack.extend_from_slice(&PACK_MAGIC.to_le_bytes());
+    pack.extend_from_slice(&0u32.to_le_bytes()); // format version
+    for _ in 0..3 {
+        pack.extend_from_slice(&0u32.to_le_bytes()); // engine version, empty in Godot 2.x
+    }
+    for _ in 0..16 {
+        pack.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    }
+    pack.extend_from_slice(&1u32.to_le_bytes()); // file count
+    let path = b"res://icon.png";
+    pack.extend_from_slice(&(path.len() as u32).to_le_bytes());
+    pack.extend_from_slice(path);
+    let offset_field = pack.len();
+    pack.extend_from_slice(&0u64.to_le_bytes()); // offset, patched below
+    let content = b"\x89PNG\r\n\x1a\n";
+    pack.extend_from_slice(&(content.len() as u64).to_le_bytes());
+    pack.extend_from_slice(&[0u8; 16]); // empty md5
+    let data_offset = pack.len() as u64;
+    pack[offset_field..offset_field + 8].copy_from_slice(&data_offset.to_le_bytes());
+    pack.extend_from_slice(content);
+
+    let start = locate(&pack).expect("the pack must be found");
+    let header = PckHeader::parse(&pack, start, pack.len() as u64).unwrap();
+    assert_eq!(header.format_version, 0);
+    let opened = Pck::open(&pack, header, None).unwrap();
+    assert_eq!(opened.entries.len(), 1);
+    assert_eq!(opened.entries[0].path, "res://icon.png");
+
+    let dir = tempfile::tempdir().unwrap();
+    let stats = gore::extract::extract(&pack, &opened, dir.path(), None).unwrap();
+    assert_eq!(stats.written, 1);
+    assert!(stats.checksum_errors.is_empty());
+    assert_eq!(std::fs::read(dir.path().join("icon.png")).unwrap(), content);
+}
+
+#[test]
+fn extracts_a_godot_4_0_pack() {
+    // v2 (Godot 4.0): the file offsets are relative to the file base of the header.
+    let mut pack: Vec<u8> = Vec::new();
+    pack.extend_from_slice(&PACK_MAGIC.to_le_bytes());
+    pack.extend_from_slice(&2u32.to_le_bytes()); // format version
+    pack.extend_from_slice(&4u32.to_le_bytes()); // engine major
+    pack.extend_from_slice(&0u32.to_le_bytes()); // engine minor
+    pack.extend_from_slice(&1u32.to_le_bytes()); // engine patch
+    pack.extend_from_slice(&0u32.to_le_bytes()); // flags
+    let file_base = 160u64;
+    pack.extend_from_slice(&file_base.to_le_bytes());
+    for _ in 0..16 {
+        pack.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    }
+    pack.extend_from_slice(&1u32.to_le_bytes()); // file count
+    let path = b"res://main.gd";
+    pack.extend_from_slice(&(path.len() as u32).to_le_bytes());
+    pack.extend_from_slice(path);
+    pack.extend_from_slice(&0u64.to_le_bytes()); // offset, relative to the file base
+    let content = b"extends Node\n";
+    pack.extend_from_slice(&(content.len() as u64).to_le_bytes());
+    pack.extend_from_slice(&crypto::md5(content));
+    pack.extend_from_slice(&0u32.to_le_bytes()); // flags
+                                                 // The file data is stored right after the table, at the file base.
+    while pack.len() < file_base as usize {
+        pack.push(0);
+    }
+    pack.extend_from_slice(content);
+
+    let start = locate(&pack).expect("the pack must be found");
+    let header = PckHeader::parse(&pack, start, pack.len() as u64).unwrap();
+    assert_eq!(header.format_version, 2);
+    let opened = Pck::open(&pack, header, None).unwrap();
+    assert_eq!(opened.entries.len(), 1);
+    assert_eq!(opened.entries[0].path, "res://main.gd");
+
+    let dir = tempfile::tempdir().unwrap();
+    let stats = gore::extract::extract(&pack, &opened, dir.path(), None).unwrap();
+    assert_eq!(stats.written, 1);
+    assert!(stats.checksum_errors.is_empty());
+    assert_eq!(std::fs::read(dir.path().join("main.gd")).unwrap(), content);
+}
+
+#[test]
 fn finds_a_pack_appended_at_the_end_of_a_binary() {
     // Self contained executables can carry the pack at the very end, with a small
     // pointer at the tail of the file (this is how Godot looks for it).

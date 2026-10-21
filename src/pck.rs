@@ -9,6 +9,7 @@ use crate::crypto::{self, KEY_LEN};
 /// "GDPC" in little endian.
 pub const PACK_MAGIC: u32 = 0x4350_4447;
 
+pub const PACK_FORMAT_V0: u32 = 0;
 pub const PACK_FORMAT_V1: u32 = 1;
 pub const PACK_FORMAT_V2: u32 = 2;
 pub const PACK_FORMAT_V3: u32 = 3;
@@ -69,9 +70,9 @@ impl PckHeader {
         let engine_minor = u32::from_le_bytes(data[s + 12..s + 16].try_into()?);
         let engine_patch = u32::from_le_bytes(data[s + 16..s + 20].try_into()?);
 
-        // v1 (Godot 3.x) has neither flags nor a file base: the header is followed by
-        // 16 reserved u32 and then the file count.
-        if format_version == PACK_FORMAT_V1 {
+        // v0 (Godot 2.x) and v1 (Godot 3.x) have neither flags nor a file base: the header is
+        // followed by 16 reserved u32 and then the file count.
+        if format_version <= PACK_FORMAT_V1 {
             let dir_offset = start + 20 + 64;
             if dir_offset + 4 > file_len {
                 bail!("directory offset {dir_offset} is outside the file (size {file_len})");
@@ -127,8 +128,13 @@ impl PckHeader {
 
     /// Heuristic check used while scanning a file for embedded packs.
     pub fn looks_valid(&self, file_len: u64) -> bool {
-        if self.format_version < PACK_FORMAT_V1 || self.format_version > PACK_FORMAT_V4 {
+        if self.format_version > PACK_FORMAT_V4 {
             return false;
+        }
+        if self.format_version == PACK_FORMAT_V0 {
+            // Godot 2.x leaves the engine version fields empty, so there is nothing to
+            // check besides the table being inside the file.
+            return self.dir_offset + 4 <= file_len;
         }
         if self.engine_major == 0 || self.engine_major > 6 {
             return false;
@@ -163,6 +169,20 @@ impl PckEntry {
     }
 }
 
+/// Checks that the header is plausible and that the file table it points to looks real.
+fn accept(data: &[u8], header: &PckHeader) -> bool {
+    if !header.looks_valid(data.len() as u64) {
+        return false;
+    }
+    let dir = header.dir_offset as usize;
+    if dir + 4 > data.len() {
+        return false;
+    }
+    let count = u32::from_le_bytes(data[dir..dir + 4].try_into().unwrap());
+    // A file entry needs at least 36 bytes, so this is a lower bound of the table size.
+    count > 0 && count < 1_000_000 && dir + 4 + (count as usize).saturating_mul(32) <= data.len()
+}
+
 /// Finds the offset of a pack inside `data`.
 ///
 /// Handles standalone `.pck` files, self-contained executables (pack appended at the end of
@@ -173,7 +193,7 @@ pub fn locate(data: &[u8]) -> Option<u64> {
     // 1) Standalone pack.
     if data.len() >= 4 && u32::from_le_bytes(data[0..4].try_into().ok()?) == PACK_MAGIC {
         if let Ok(h) = PckHeader::parse(data, 0, file_len) {
-            if h.looks_valid(file_len) {
+            if accept(data, &h) {
                 return Some(0);
             }
         }
@@ -193,7 +213,7 @@ pub fn locate(data: &[u8]) -> Option<u64> {
                     == PACK_MAGIC
             {
                 if let Ok(h) = PckHeader::parse(data, head, file_len) {
-                    if h.looks_valid(file_len) {
+                    if accept(data, &h) {
                         return Some(head);
                     }
                 }
@@ -207,7 +227,7 @@ pub fn locate(data: &[u8]) -> Option<u64> {
     while let Some(idx) = find(&data[pos..], &needle) {
         let abs = pos + idx;
         if let Ok(h) = PckHeader::parse(data, abs as u64, file_len) {
-            if h.looks_valid(file_len) {
+            if accept(data, &h) {
                 return Some(abs as u64);
             }
         }
@@ -263,8 +283,8 @@ impl Pck {
         // Guard against a corrupted file count asking for a huge allocation.
         let capacity = (file_count as usize).min(table.len() / 32 + 1);
         let mut entries = Vec::with_capacity(capacity);
-        // v1 (Godot 3.x) entries have no flags field and their path is not padded.
-        let legacy = header.format_version == PACK_FORMAT_V1;
+        // v0 (Godot 2.x) and v1 (Godot 3.x) entries have no flags field.
+        let legacy = header.format_version <= PACK_FORMAT_V1;
         for _ in 0..file_count {
             if cursor + 4 > table.len() {
                 bail!("file table truncated after {} entries", entries.len());
