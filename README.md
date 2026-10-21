@@ -167,6 +167,9 @@ the scan short; the whole file is searched if that fails.
 | SNAPTIC Demo | 4.7.1 | v4 | yes | key recovered automatically, 7756 files verified |
 | Lucid Blocks | 4.6.0 | v3 | no | 5951 files verified |
 
+Godot 3.x games (`v1` packs) are supported too: they are not encrypted, so there is no key to
+look for.
+
 ---
 
 ## Development
