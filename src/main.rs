@@ -1,6 +1,6 @@
 //! `gore` — Godot Reverse Engineering toolkit.
 //!
-//! Turns a Godot game (`.pck`, `.exe`, `.apk`, self contained binary) into an openable
+//! Turns a Godot game (`.pck`, `.exe`, self contained binary) into an openable
 //! Godot project, recovering the pack encryption key automatically when needed.
 
 use gore::binfmt;
@@ -28,7 +28,7 @@ use gore::pck::{Pck, PckHeader};
     version,
     about = "Turn any Godot game into an openable Godot project.",
     long_about = "gore locates the Godot pack inside a game (standalone .pck, self contained \
-                  .exe/.x86_64/.apk), recovers the pack encryption key when it is needed, \
+                  .exe/.x86_64), recovers the pack encryption key when it is needed, \
                   extracts the contents and hands the project over to GDRE Tools for full \
                   recovery (decompiled scripts, converted resources)."
 )]
@@ -65,7 +65,7 @@ struct Cli {
 enum Command {
     /// Show information about the pack inside a Godot game
     Info {
-        /// The game file (.pck, .exe, .x86_64, .apk, ...)
+        /// The game file (.pck, .exe, .x86_64, ...)
         file: PathBuf,
         /// Do not try to recover the encryption key
         #[arg(long)]

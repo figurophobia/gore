@@ -2,8 +2,8 @@
 
 **Godot Reverse Engineering toolkit** — turn any Godot game into an openable Godot project.
 
-`gore` finds the Godot pack inside a game (standalone `.pck`, self-contained `.exe`/`.x86_64`,
-`.apk`), **recovers the pack encryption key automatically** when the game uses one, extracts and
+`gore` finds the Godot pack inside a game (standalone `.pck`, self-contained `.exe`/`.x86_64`),
+**recovers the pack encryption key automatically** when the game uses one, extracts and
 decrypts the contents, and hands the result over to [GDRE Tools][gdre] for full project recovery
 (decompiled GDScript, converted textures, import files, `project.godot`).
 
@@ -155,8 +155,7 @@ the scan short; the whole file is searched if that fails.
 * **Pack formats** v1 (Godot 3.x), v2, v3 and v4 (Godot 4.x). Encrypted packs need the key;
   `gore` finds it on its own in the usual cases.
 * **Containers**: standalone `.pck`, packs appended to an executable, packs embedded in a PE
-  section (the `pck` section of self contained Windows builds), and `.apk` files (the `assets`
-  folder is scanned).
+  section (the `pck` section of self contained Windows builds).
 * **Encryption**: encrypted file tables and individually encrypted files, AES-256-CFB, with the
   MD5 of every file verified after decryption.
 * **Binary formats** for the key search: PE (Windows) and ELF (Linux, macOS).
