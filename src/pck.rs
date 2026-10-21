@@ -277,11 +277,10 @@ impl Pck {
             }
             let mut raw = &table[cursor..cursor + len];
             cursor += len;
-            // In v2+ the path is zero padded to a multiple of 4 bytes.
-            if !legacy {
-                while raw.last() == Some(&0) {
-                    raw = &raw[..raw.len() - 1];
-                }
+            // The path can be zero padded to a multiple of 4 bytes. Godot 3 does not pad it,
+            // but other writers (GDRE Tools) do, and trimming is harmless in both cases.
+            while raw.last() == Some(&0) {
+                raw = &raw[..raw.len() - 1];
             }
             let path = String::from_utf8_lossy(raw).to_string();
             let offset = u64::from_le_bytes(table[cursor..cursor + 8].try_into()?);
@@ -310,12 +309,13 @@ impl Pck {
     }
 
     /// Absolute offset of a file's data inside the container.
+    ///
+    /// Godot always stores the offset of every entry relative to the file base, and the
+    /// file base itself is relative to the start of the pack when `PACK_REL_FILEBASE` is
+    /// set (which is always the case from v3 on). Both adjustments are already applied
+    /// when the header is parsed.
     pub fn data_offset(&self, entry: &PckEntry) -> u64 {
-        if self.header.rel_filebase() || self.header.format_version >= PACK_FORMAT_V3 {
-            self.header.file_base + entry.offset
-        } else {
-            entry.offset
-        }
+        self.header.file_base + entry.offset
     }
 }
 
