@@ -153,6 +153,10 @@ pub fn container_kind(data: &[u8]) -> &'static str {
         "Mach-O (macOS)"
     } else if data.len() >= 4 && &data[0..4] == b"\xca\xfe\xba\xbe" {
         "Mach-O fat (macOS)"
+    } else if data.len() >= 4
+        && u32::from_le_bytes(data[0..4].try_into().unwrap()) == crate::pck::PACK_MAGIC
+    {
+        "PCK (standalone pack)"
     } else {
         "unknown"
     }
@@ -168,5 +172,13 @@ mod tests {
         assert!(pe_sections(&data).is_none());
         assert!(elf_sections(&data).is_none());
         assert_eq!(container_kind(&data), "unknown");
+    }
+
+    #[test]
+    fn names_a_standalone_pack() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&crate::pck::PACK_MAGIC.to_le_bytes());
+        data.extend_from_slice(&[0u8; 60]);
+        assert_eq!(container_kind(&data), "PCK (standalone pack)");
     }
 }
