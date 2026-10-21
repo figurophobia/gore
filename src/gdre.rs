@@ -22,34 +22,51 @@ pub fn locate(explicit: Option<&Path>) -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let exe_name = if cfg!(windows) {
-        "gdre_tools.exe"
+
+    // The binary is called `gdre_tools` everywhere, with the architecture as a suffix.
+    let bin_names: &[&str] = if cfg!(windows) {
+        &["gdre_tools.exe"]
+    } else if cfg!(target_os = "macos") {
+        &["gdre_tools", "gdre_tools.arm64", "gdre_tools.x86_64"]
     } else {
-        "gdre_tools"
+        &["gdre_tools", "gdre_tools.x86_64", "gdre_tools.aarch64"]
     };
+
     // 1) PATH
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(':') {
-            let candidate = Path::new(dir).join(exe_name);
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for name in bin_names {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    // 2) Common installation folders
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for var in ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"] {
+        if let Some(value) = std::env::var_os(var) {
+            let home = PathBuf::from(value);
+            dirs.push(home.join(".local/share/gdre_tools"));
+            dirs.push(home.join(".local/share/gore"));
+            dirs.push(home.join("bin"));
+            dirs.push(home.join("Applications"));
+        }
+    }
+    dirs.push(PathBuf::from("/usr/local/bin"));
+    dirs.push(PathBuf::from("/usr/bin"));
+
+    for dir in dirs {
+        for name in bin_names {
+            let candidate = dir.join(name);
             if candidate.exists() {
                 return Some(candidate);
             }
         }
     }
-    // 2) Common installation folders
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        candidates.push(home.join(".local/share/gdre_tools/gdre_tools.x86_64"));
-        candidates.push(home.join(".local/share/gdre_tools/gdre_tools.exe"));
-        candidates.push(home.join(".local/share/gore/gdre_tools.x86_64"));
-        candidates.push(home.join(".local/share/gore/gdre_tools.exe"));
-        candidates.push(home.join("bin/gdre_tools"));
-        candidates.push(home.join("Applications/gdre_tools"));
-    }
-    candidates.push(PathBuf::from("/usr/local/bin/gdre_tools"));
-    candidates.push(PathBuf::from("/usr/bin/gdre_tools"));
-    candidates.into_iter().find(|candidate| candidate.exists())
+    None
 }
 
 /// Runs GDRE Tools with the given arguments.

@@ -212,6 +212,30 @@ fn extracts_a_godot_3_pack() {
 }
 
 #[test]
+fn finds_a_pack_appended_at_the_end_of_a_binary() {
+    // Self contained executables can carry the pack at the very end, with a small
+    // pointer at the tail of the file (this is how Godot looks for it).
+    let files: Vec<(&str, &[u8])> = vec![("res://main.gd", b"extends Node\n")];
+    let pack = build_pack(&files, None);
+
+    let mut blob = vec![0xCDu8; 2048]; // fake executable
+    let head = blob.len() as u64;
+    blob.extend_from_slice(&pack);
+    let mut tail = vec![0u8; 16];
+    let ds = blob.len() as u64 + 16 - 24 - head;
+    tail[0..8].copy_from_slice(&ds.to_le_bytes());
+    tail[12..16].copy_from_slice(&PACK_MAGIC.to_le_bytes());
+    blob.extend_from_slice(&tail);
+
+    let start = locate(&blob).expect("the pack must be found");
+    assert_eq!(start, head);
+    let header = PckHeader::parse(&blob, start, blob.len() as u64).unwrap();
+    let opened = Pck::open(&blob, header, None).unwrap();
+    assert_eq!(opened.entries.len(), 1);
+    assert_eq!(opened.entries[0].path, "res://main.gd");
+}
+
+#[test]
 fn rejects_a_file_that_is_not_a_pack() {
     let data = vec![0u8; 1024];
     assert!(locate(&data).is_none());
