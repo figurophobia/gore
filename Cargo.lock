@@ -431,11 +431,12 @@ dependencies = [
 
 [[package]]
 name = "gore"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "aes",
  "anyhow",
  "clap",
+ "libc",
  "md-5",
  "memmap2",
  "rayon",

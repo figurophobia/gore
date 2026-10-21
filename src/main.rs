@@ -99,6 +99,13 @@ enum Command {
 }
 
 fn main() {
+    // Behave like any other Unix tool when the reader of our output goes away
+    // (`gore info game.pck | head`), instead of panicking on a broken pipe.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     if let Err(err) = run() {
         eprintln!("gore: error: {err:#}");
         std::process::exit(1);
