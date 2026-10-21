@@ -330,9 +330,9 @@ fn cmd_recover(cli: &Cli, file: &Path, dry_run: bool) -> Result<()> {
         if let Some(siblings) = sibling_packs(&target) {
             eprintln!("* other packs next to this one: {}", siblings.join(", "));
             eprintln!(
-                "* a DLC shipped as a separate pack is not part of this one; extract both into \
-                 the same directory (later packs overwrite earlier ones) and run \
-                 `gore recover <dir>` to get the complete project"
+                "* if they are DLC or patches, merge them into a directory first (extras first, \
+                 this base pack last so its project.binary wins) and recover that directory \
+                 with `gore recover <dir>`"
             );
         }
     }
