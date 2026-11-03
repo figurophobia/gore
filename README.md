@@ -2,8 +2,6 @@
   <img src="assets/logo.svg" width="260" alt="gore">
 </p>
 
-<h1 align="center">gore</h1>
-
 **Godot Reverse Engineering toolkit** — turn any Godot game into an openable Godot project.
 
 [![CI](https://github.com/figurophobia/gore/actions/workflows/ci.yml/badge.svg)](https://github.com/figurophobia/gore/actions/workflows/ci.yml)
