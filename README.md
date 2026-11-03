@@ -1,4 +1,8 @@
-# gore
+<p align="center">
+  <img src="assets/logo.svg" width="260" alt="gore">
+</p>
+
+<h1 align="center">gore</h1>
 
 **Godot Reverse Engineering toolkit** — turn any Godot game into an openable Godot project.
 
@@ -222,9 +226,16 @@ binary:
    verbatim.
 
 The scan runs in tiers, from strict to loose, and stops at the first verified hit: paths that
-look like real paths first, then any plausible text, then any printable ASCII. Searching the
-data sections (`.data`, `.rdata`, `.rodata`) of PE and ELF binaries first keeps the scan short;
-the whole file is searched if that fails.
+look like real paths first, then any plausible text, then any printable ASCII, and finally any
+UTF-8 (for a first file with an accented or non-Latin name). Searching the data sections
+(`.data`, `.rdata`, `.rodata`) of PE and ELF binaries first keeps the scan short; the whole file
+is searched if that fails, split into 1 MiB chunks across every core. A cheap byte-diversity
+pre-filter skips low-entropy windows before the AES probe, and the final exhaustive pass turns
+it off so even a degenerate key (all zeros, a repeated byte) is still found.
+
+If the key is not stored verbatim in the binary (some games assemble it at startup, or a fork
+splits or XORs it), point `--scan` at a memory dump of the running game: the same oracle finds
+the key wherever it appears as 32 contiguous bytes.
 
 That is also why encrypted games are rare in practice: enabling pack encryption requires
 building custom export templates, so almost every commercial Godot game ships unencrypted.
@@ -248,6 +259,8 @@ building custom export templates, so almost every commercial Godot game ships un
 * standalone `.pck`;
 * packs appended at the end of an executable;
 * packs embedded in a PE section (the `pck` section of self contained Windows builds);
+* packs whose `GDPC` signature was renamed to hide them — detected by structure (a plausible
+  header pointing at a valid file table), both standalone and inside an executable;
 * an already extracted directory, to merge several packs before recovery.
 
 **Encryption**
@@ -277,6 +290,10 @@ other stores). Real games run custom engine builds, so use the editor version GD
 * **APK is not supported.** Packs inside Android packages are not handled; point `gore` at a
   `.pck`, an executable or an extracted directory.
 * **Sparse bundle packs are rejected** with an explicit error rather than a confusing crash.
+* **Forks that change the cipher itself** (not just the key) are not decrypted. `gore` implements
+  Godot's own AES-256-CFB `FileAccessEncrypted` framing; a fork that swaps the algorithm, the
+  mode or the blob layout would need its specifics. Renaming the `GDPC` magic or hiding the key
+  is handled; changing the crypto is a different problem.
 * **Custom engine builds.** Games can ship a patched Godot (Brotato uses 3.7.0 with a `steam`
   feature, Buckshot Roulette needs GodotSteam, Lucid Blocks a `double` precision build). The
   unpacking is unaffected; opening the project in the editor is not, and that is a limitation of
@@ -299,8 +316,10 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 The test suite builds synthetic packs for every format (`v0`, `v1`, `v2`, `v4`), an encrypted
-pack with a known key, a pack appended to a fake binary and a key hidden in a binary, then checks
-that each one is parsed, decrypted and extracted again. Two extra tests cover the CLI surface.
+pack with a known key, a pack appended to a fake binary, a key hidden in a binary, packs whose
+`GDPC` magic was renamed (standalone and self contained), a key straddling a scan-chunk
+boundary, and the UTF-8 and low-entropy key filters, then checks that each one is parsed,
+decrypted and extracted again. Two extra tests cover the CLI surface.
 
 Layout:
 
