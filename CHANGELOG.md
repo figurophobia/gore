@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+* **Packs with a renamed `GDPC` magic** (a common cheap obfuscation) are now detected by
+  structure, both as a standalone pack and inside a self-contained executable, instead of
+  reporting "no Godot pack found".
+* A **UTF-8 tier** in the key search, so a pack whose first file has a non-ASCII (accented or
+  non-Latin) name no longer defeats automatic key recovery.
+
+### Changed
+
+* **The key search now uses every CPU core.** The whole-file passes used to run on a single
+  thread; they are split into overlapping 1 MiB chunks and scanned in parallel (about 9× faster
+  on a 16-core machine). A cheap byte-diversity pre-filter also skips low-entropy windows before
+  the AES probe, and the exhaustive final passes keep it off so a degenerate key is still found.
+* **Faster decryption and extraction.** The AES key schedule is built once per file instead of
+  once per 16-byte block, extraction runs across cores, and reading a plaintext file table no
+  longer copies the rest of the pack.
+
 ## [0.3.3] — 2026-10-21
 
 ### Added

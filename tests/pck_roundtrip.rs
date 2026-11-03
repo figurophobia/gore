@@ -323,3 +323,44 @@ fn rejects_a_file_that_is_not_a_pack() {
     let data = vec![0u8; 1024];
     assert!(locate(&data).is_none());
 }
+
+#[test]
+fn locates_a_standalone_pack_with_a_renamed_magic() {
+    // Some cheap obfuscations only change the 4 byte "GDPC" signature. The structural
+    // fallback must still find the pack.
+    let files: Vec<(&str, &[u8])> = vec![("res://main.gd", b"extends Node\n")];
+    let mut pack = build_pack(&files, None);
+    pack[0..4].copy_from_slice(b"XXXX"); // rename the magic
+    assert!(PckHeader::parse(&pack, 0, pack.len() as u64).is_err()); // strict parse refuses it
+
+    let start = locate(&pack).expect("the pack must be found by structure");
+    assert_eq!(start, 0);
+    let header = PckHeader::parse_relaxed(&pack, start, pack.len() as u64).unwrap();
+    let opened = Pck::open(&pack, header, None).unwrap();
+    assert_eq!(opened.entries[0].path, "res://main.gd");
+}
+
+#[test]
+fn locates_a_self_contained_pack_with_a_renamed_magic() {
+    // The same obfuscation on a self-contained binary: the (renamed) magic appears both in
+    // the header and in the tail pointer, which is the signal the fallback keys on.
+    let magic = *b"ZZZZ";
+    let files: Vec<(&str, &[u8])> = vec![("res://main.gd", b"extends Node\n")];
+    let mut pack = build_pack(&files, None);
+    pack[0..4].copy_from_slice(&magic);
+
+    let mut blob = vec![0xCDu8; 2048];
+    let head = blob.len() as u64;
+    blob.extend_from_slice(&pack);
+    let mut tail = vec![0u8; 16];
+    let ds = blob.len() as u64 + 16 - 24 - head;
+    tail[0..8].copy_from_slice(&ds.to_le_bytes());
+    tail[12..16].copy_from_slice(&magic);
+    blob.extend_from_slice(&tail);
+
+    let start = locate(&blob).expect("the pack must be found by structure");
+    assert_eq!(start, head);
+    let header = PckHeader::parse_relaxed(&blob, start, blob.len() as u64).unwrap();
+    let opened = Pck::open(&blob, header, None).unwrap();
+    assert_eq!(opened.entries[0].path, "res://main.gd");
+}

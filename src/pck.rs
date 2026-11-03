@@ -54,15 +54,28 @@ impl PckHeader {
         self.flags & PACK_REL_FILEBASE != 0
     }
 
-    /// Parses the header of a pack located at `start` inside `data`.
+    /// Parses the header of a pack located at `start` inside `data`, requiring the `GDPC`
+    /// magic.
     pub fn parse(data: &[u8], start: u64, file_len: u64) -> Result<PckHeader> {
+        Self::parse_inner(data, start, file_len, true)
+    }
+
+    /// Like [`parse`](Self::parse) but without checking the magic, so a pack whose `GDPC`
+    /// signature has been renamed (a common cheap obfuscation) can still be read. Correctness
+    /// is guaranteed elsewhere: the header has to be structurally valid and point at a real
+    /// file table, and an encrypted directory is only opened once its MD5 verifies.
+    pub fn parse_relaxed(data: &[u8], start: u64, file_len: u64) -> Result<PckHeader> {
+        Self::parse_inner(data, start, file_len, false)
+    }
+
+    fn parse_inner(data: &[u8], start: u64, file_len: u64, check_magic: bool) -> Result<PckHeader> {
         let s = start as usize;
         let need = 40;
         if data.len() < s + need {
             bail!("pack header truncated at offset {start}");
         }
         let magic = u32::from_le_bytes(data[s..s + 4].try_into()?);
-        if magic != PACK_MAGIC {
+        if check_magic && magic != PACK_MAGIC {
             bail!("bad magic {magic:#010x} at offset {start}");
         }
         let format_version = u32::from_le_bytes(data[s + 4..s + 8].try_into()?);
@@ -233,6 +246,55 @@ pub fn locate(data: &[u8]) -> Option<u64> {
         }
         pos = abs + 1;
     }
+
+    // 4) Magic-agnostic fallback, for packs whose `GDPC` signature was renamed.
+    locate_renamed_magic(data)
+}
+
+/// Finds a pack whose 4 byte magic has been changed from `GDPC` to something else — a common
+/// cheap obfuscation. Relies entirely on structure, so it is only tried after the normal
+/// searches fail, and it uses a stricter acceptance (modern format, plausible engine version)
+/// to avoid mistaking random data for a pack.
+fn locate_renamed_magic(data: &[u8]) -> Option<u64> {
+    let file_len = data.len() as u64;
+
+    // Structurally valid *and* modern enough that the header's engine-version fields give us
+    // something to check (the legacy v0/v1 layout carries no such fields, so without a magic
+    // it would match far too easily).
+    let strong = |h: &PckHeader| -> bool {
+        (PACK_FORMAT_V2..=PACK_FORMAT_V4).contains(&h.format_version)
+            && (1..=6).contains(&h.engine_major)
+            && accept(data, h)
+    };
+
+    // a) Self-contained executable: Godot writes the same magic both in the header and in the
+    //    4 byte trailer. We do not know the value, but it must match at both computed spots,
+    //    which is a strong signal even when it is not "GDPC".
+    if data.len() > 32 {
+        let tail: [u8; 4] = data[data.len() - 4..].try_into().ok()?;
+        let ds_off = data.len() - 16;
+        if let Ok(ds_bytes) = data[ds_off..ds_off + 8].try_into() {
+            let ds = u64::from_le_bytes(ds_bytes);
+            if let Some(head) = (data.len() as u64).checked_sub(16 + ds + 8) {
+                let h = head as usize;
+                if h + 4 <= data.len() && data[h..h + 4] == tail {
+                    if let Ok(header) = PckHeader::parse_relaxed(data, head, file_len) {
+                        if strong(&header) {
+                            return Some(head);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // b) Standalone pack whose leading magic was renamed: validate offset 0 by structure.
+    if let Ok(header) = PckHeader::parse_relaxed(data, 0, file_len) {
+        if strong(&header) {
+            return Some(0);
+        }
+    }
+
     None
 }
 
@@ -266,17 +328,19 @@ impl Pck {
         }
         let file_count = u32::from_le_bytes(data[dir..dir + 4].try_into()?);
 
-        let table: Vec<u8> = if header.dir_encrypted() {
+        // When the directory is plaintext the table is just the tail of the mapped file, so
+        // borrow it instead of copying (it can be the whole pack for v0/v1/v2). Only the
+        // encrypted case needs an owned, decrypted buffer.
+        let table: std::borrow::Cow<[u8]> = if header.dir_encrypted() {
             let key = key.context("the pack directory is encrypted but no key was supplied")?;
             let (blob, _) = crypto::EncryptedBlob::parse(&data[dir + 4..])
                 .context("cannot parse the encrypted directory header")?;
-            blob.decrypt(key).context(
+            std::borrow::Cow::Owned(blob.decrypt(key).context(
                 "cannot decrypt the directory: wrong key or corrupted pack (MD5 mismatch)",
-            )?
+            )?)
         } else {
             // The rest of the file is the table; it ends at the end of the pack.
-            let end = data.len();
-            data[dir + 4..end].to_vec()
+            std::borrow::Cow::Borrowed(&data[dir + 4..])
         };
 
         let mut cursor = 0usize;

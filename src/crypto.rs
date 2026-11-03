@@ -21,9 +21,20 @@ pub fn md5(data: &[u8]) -> [u8; 16] {
 }
 
 /// Encrypts a single 16-byte block with AES-256 (ECB). Used as the CFB keystream generator.
+///
+/// This builds the AES key schedule on every call, so it is meant for the one-shot probe in
+/// the key search (where the key changes every time). To process many blocks under the *same*
+/// key — as [`cfb_decrypt`]/[`cfb_encrypt`] do — build the cipher once with [`Aes256::new`]
+/// and call [`block_keystream`] instead.
 #[inline]
 pub fn aes_encrypt_block(key: &[u8; KEY_LEN], block: &[u8; IV_LEN]) -> [u8; IV_LEN] {
     let cipher = Aes256::new(key.into());
+    block_keystream(&cipher, block)
+}
+
+/// One AES block under an already-scheduled cipher. Hot path for CFB over a whole file.
+#[inline]
+fn block_keystream(cipher: &Aes256, block: &[u8; IV_LEN]) -> [u8; IV_LEN] {
     let mut buf = *block;
     cipher.encrypt_block((&mut buf).into());
     buf
@@ -31,10 +42,12 @@ pub fn aes_encrypt_block(key: &[u8; KEY_LEN], block: &[u8; IV_LEN]) -> [u8; IV_L
 
 /// AES-256-CFB decryption (segment size 128 bits), as used by `CryptoCore::decrypt_cfb`.
 pub fn cfb_decrypt(data: &[u8], key: &[u8; KEY_LEN], iv: &[u8; IV_LEN]) -> Vec<u8> {
+    // The key is fixed for the whole file, so schedule it once instead of per block.
+    let cipher = Aes256::new(key.into());
     let mut out = Vec::with_capacity(data.len());
     let mut prev = *iv;
     for chunk in data.chunks(IV_LEN) {
-        let ks = aes_encrypt_block(key, &prev);
+        let ks = block_keystream(&cipher, &prev);
         let mut block = [0u8; IV_LEN];
         for (i, &b) in chunk.iter().enumerate() {
             block[i] = b ^ ks[i];
@@ -53,10 +66,11 @@ pub fn cfb_decrypt(data: &[u8], key: &[u8; KEY_LEN], iv: &[u8; IV_LEN]) -> Vec<u
 /// Note that the feedback is the previous *ciphertext* block, exactly as in
 /// `CryptoCore::encrypt_cfb`.
 pub fn cfb_encrypt(data: &[u8], key: &[u8; KEY_LEN], iv: &[u8; IV_LEN]) -> Vec<u8> {
+    let cipher = Aes256::new(key.into());
     let mut out = Vec::with_capacity(data.len());
     let mut prev = *iv;
     for chunk in data.chunks(IV_LEN) {
-        let ks = aes_encrypt_block(key, &prev);
+        let ks = block_keystream(&cipher, &prev);
         let mut block = [0u8; IV_LEN];
         for (i, &b) in chunk.iter().enumerate() {
             block[i] = b ^ ks[i];

@@ -459,15 +459,20 @@ fn recover_key(cli: &Cli, game: &Game) -> Result<Option<[u8; KEY_LEN]>> {
             Pck::open(data_view(game), game.header.clone(), Some(key)).is_ok()
         };
 
-        for (tier, step, narrowed) in [
-            (Tier::Strict, 1, true),
-            (Tier::Loose, 1, true),
-            (Tier::Strict, 8, false),
-            (Tier::Strict, 1, false),
-            (Tier::Loose, 8, false),
-            (Tier::Loose, 1, false),
-            (Tier::Weak, 8, false),
-            (Tier::Weak, 1, false),
+        // Passes from fast to exhaustive. `prefilter` skips low-entropy windows before the
+        // AES probe (a big win on real binaries); it is turned off for the exhaustive tail so
+        // a degenerate key is never missed.
+        for (tier, step, narrowed, prefilter) in [
+            (Tier::Strict, 1, true, true),
+            (Tier::Loose, 1, true, true),
+            (Tier::Strict, 8, false, true),
+            (Tier::Strict, 1, false, true),
+            (Tier::Loose, 8, false, true),
+            (Tier::Loose, 1, false, true),
+            (Tier::Weak, 8, false, true),
+            (Tier::Weak, 1, false, false),
+            // Last resort: a first filename that is not ASCII (UTF-8 / non-Latin names).
+            (Tier::Utf8, 1, false, false),
         ] {
             let scan_ranges: Vec<std::ops::Range<usize>> = if narrowed {
                 ranges.clone()
@@ -475,7 +480,8 @@ fn recover_key(cli: &Cli, game: &Game) -> Result<Option<[u8; KEY_LEN]>> {
                 let whole = 0..data.len();
                 vec![whole]
             };
-            let hit = keyfind::scan_verified(&data, &oracle, &scan_ranges, step, tier, &verify);
+            let hit =
+                keyfind::scan_verified(&data, &oracle, &scan_ranges, step, tier, prefilter, &verify);
             if let Some(hit) = hit {
                 eprintln!(
                     "* key found at offset {} of {} ({:.1}s)",

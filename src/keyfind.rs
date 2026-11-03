@@ -26,6 +26,10 @@ pub enum Tier {
     Loose,
     /// The first path must be printable ASCII.
     Weak,
+    /// The first path may contain any non-control bytes, including UTF-8 (a pack whose first
+    /// file has an accented or non-Latin name). This is the loosest structural filter: it
+    /// leans almost entirely on the file-table length field and the final MD5 verification.
+    Utf8,
 }
 
 /// Knows what a decrypted file table header must look like.
@@ -65,8 +69,15 @@ impl Oracle {
             return None;
         }
         let path_bytes = (len as usize - 4).min(12);
-        for &b in &pt0[4..4 + path_bytes] {
-            if !is_path_byte(b) {
+        let path = &pt0[4..4 + path_bytes];
+        // Per-byte validity depends on the tier: UTF-8 allows high bytes, the rest require
+        // path characters.
+        let byte_ok = |b: u8| match tier {
+            Tier::Utf8 => b >= 0x20, // any printable or high byte, no control characters
+            _ => is_path_byte(b),
+        };
+        for &b in path {
+            if !byte_ok(b) {
                 return None;
             }
         }
@@ -76,17 +87,18 @@ impl Oracle {
                 if !is_path_start(pt0[4]) {
                     return None;
                 }
-                Some(3)
+                Some(4)
             }
-            Tier::Loose => Some(2),
+            Tier::Loose => Some(3),
             Tier::Weak => {
-                for &b in &pt0[4..4 + path_bytes] {
+                for &b in path {
                     if !(0x20..=0x7e).contains(&b) {
                         return None;
                     }
                 }
-                Some(1)
+                Some(2)
             }
+            Tier::Utf8 => Some(1),
         }
     }
 }
@@ -110,6 +122,96 @@ pub struct KeyHit {
     pub score: u8,
 }
 
+/// Size of the slices the scan is cut into so every CPU core gets work.
+///
+/// The key search is overwhelmingly dominated by the whole-file passes, which are a single
+/// `Range` covering the entire binary. Iterating that range on one thread leaves every other
+/// core idle, so the range is split into chunks of this size (with a `KEY_LEN - 1` overlap so
+/// a key straddling a chunk boundary is still seen) and the chunks are run in parallel.
+const CHUNK: usize = 1 << 20; // 1 MiB
+
+/// How many distinct byte values a window must have to be worth an AES probe, in the passes
+/// where the cheap pre-filter is enabled. A real AES-256 key is 32 random bytes, so it has
+/// close to 32 distinct values; long runs of zeros or repeated padding (most of `.rodata`)
+/// are rejected before the expensive key schedule. The exhaustive final passes disable this
+/// so even a degenerate key (all zeros, a repeated byte) is still found.
+const MIN_DISTINCT_BYTES: usize = 12;
+
+/// True when the 32 byte window has enough distinct values to plausibly be a random key.
+#[inline]
+fn passes_prefilter(win: &[u8]) -> bool {
+    let mut seen = [false; 256];
+    let mut distinct = 0usize;
+    for &b in win {
+        if !seen[b as usize] {
+            seen[b as usize] = true;
+            distinct += 1;
+            if distinct >= MIN_DISTINCT_BYTES {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Cuts `ranges` into parallel-friendly chunks of at most [`CHUNK`] bytes, each overlapping
+/// the next by `KEY_LEN - 1` so no candidate key is missed at a boundary.
+fn chunks(ranges: &[Range<usize>], data_len: usize) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    for range in ranges {
+        let start = range.start;
+        let end = range.end.min(data_len);
+        if end < start + KEY_LEN {
+            continue;
+        }
+        let mut off = start;
+        while off + KEY_LEN <= end {
+            let chunk_end = (off + CHUNK).min(end);
+            out.push(off..chunk_end);
+            if chunk_end == end {
+                break;
+            }
+            // Step back so a key spanning the cut is covered by the next chunk too.
+            off = chunk_end - (KEY_LEN - 1);
+        }
+    }
+    out
+}
+
+/// Sweeps one chunk, calling `accept` on every window that passes the structural oracle (and
+/// the pre-filter, when enabled). Returns the first accepted hit.
+#[inline]
+fn sweep_chunk(
+    data: &[u8],
+    oracle: &Oracle,
+    chunk: &Range<usize>,
+    step: usize,
+    tier: Tier,
+    prefilter: bool,
+    accept: &impl Fn(&[u8; KEY_LEN]) -> bool,
+) -> Option<KeyHit> {
+    let end = chunk.end.min(data.len());
+    let mut off = chunk.start;
+    while off + KEY_LEN <= end {
+        let win = &data[off..off + KEY_LEN];
+        if !prefilter || passes_prefilter(win) {
+            let mut key = [0u8; KEY_LEN];
+            key.copy_from_slice(win);
+            if let Some(score) = oracle.test(&key, tier) {
+                if accept(&key) {
+                    return Some(KeyHit {
+                        offset: off as u64,
+                        key,
+                        score,
+                    });
+                }
+            }
+        }
+        off += step;
+    }
+    None
+}
+
 /// Scans `data` for a 32 byte window that decrypts the file table into a plausible path.
 ///
 /// `ranges` restricts the search to interesting regions of the file (data sections).
@@ -123,64 +225,32 @@ pub fn scan(
     tier: Tier,
 ) -> Option<KeyHit> {
     let step = step.max(1);
-    ranges.par_iter().find_map_any(|range| {
-        let start = range.start;
-        let end = range.end.min(data.len());
-        if end < start + KEY_LEN {
-            return None;
-        }
-        let mut off = start;
-        while off + KEY_LEN <= end {
-            let mut key = [0u8; KEY_LEN];
-            key.copy_from_slice(&data[off..off + KEY_LEN]);
-            if let Some(score) = oracle.test(&key, tier) {
-                return Some(KeyHit {
-                    offset: off as u64,
-                    key,
-                    score,
-                });
-            }
-            off += step;
-        }
-        None
-    })
+    let chunks = chunks(ranges, data.len());
+    chunks
+        .par_iter()
+        .find_map_any(|chunk| sweep_chunk(data, oracle, chunk, step, tier, false, &|_| true))
 }
 
 /// Same as [`scan`], but every candidate that passes the structural filter is confirmed by
 /// `verify` (which must decrypt the real file table). Only a true key can pass that check,
 /// so the result is guaranteed to be correct.
+///
+/// `prefilter` skips low-entropy windows before the AES probe; leave it off for the final
+/// exhaustive pass so a degenerate key is never missed.
 pub fn scan_verified(
     data: &[u8],
     oracle: &Oracle,
     ranges: &[Range<usize>],
     step: usize,
     tier: Tier,
+    prefilter: bool,
     verify: &(impl Fn(&[u8; KEY_LEN]) -> bool + Sync),
 ) -> Option<KeyHit> {
     let step = step.max(1);
-    ranges.par_iter().find_map_any(|range| {
-        let start = range.start;
-        let end = range.end.min(data.len());
-        if end < start + KEY_LEN {
-            return None;
-        }
-        let mut off = start;
-        while off + KEY_LEN <= end {
-            let mut key = [0u8; KEY_LEN];
-            key.copy_from_slice(&data[off..off + KEY_LEN]);
-            if let Some(score) = oracle.test(&key, tier) {
-                if verify(&key) {
-                    return Some(KeyHit {
-                        offset: off as u64,
-                        key,
-                        score,
-                    });
-                }
-            }
-            off += step;
-        }
-        None
-    })
+    let chunks = chunks(ranges, data.len());
+    chunks
+        .par_iter()
+        .find_map_any(|chunk| sweep_chunk(data, oracle, chunk, step, tier, prefilter, verify))
 }
 
 /// Tries a list of passwords, using the two ways Godot derives a key from a password.
@@ -200,7 +270,7 @@ pub fn try_passwords(oracle: &Oracle, passwords: &[String]) -> Option<KeyHit> {
             candidates.push(key);
         }
         for key in candidates {
-            for tier in [Tier::Strict, Tier::Loose, Tier::Weak] {
+            for tier in [Tier::Strict, Tier::Loose, Tier::Weak, Tier::Utf8] {
                 if let Some(score) = oracle.test(&key, tier) {
                     return Some(KeyHit {
                         offset: 0,
@@ -289,5 +359,42 @@ mod tests {
         .unwrap();
         assert_eq!(hit.offset, 1234);
         assert_eq!(hit.key, key);
+    }
+
+    #[test]
+    fn utf8_tier_accepts_a_non_ascii_first_path() {
+        // A pack whose first file has an accented name: the stricter tiers reject it, the
+        // UTF-8 tier does not.
+        // The non-ASCII bytes fall within the first path bytes the oracle inspects.
+        let (blob, key) = synthetic_table("res://áéíóú.tscn");
+        let oracle = Oracle::new(&blob).unwrap();
+        assert!(oracle.test(&key, Tier::Strict).is_none());
+        assert!(oracle.test(&key, Tier::Weak).is_none());
+        assert!(oracle.test(&key, Tier::Utf8).is_some());
+    }
+
+    #[test]
+    fn finds_a_key_straddling_a_chunk_boundary() {
+        // The whole-file passes are cut into CHUNK-sized slices; a key sitting across a cut
+        // must still be found thanks to the overlap.
+        let (blob, key) = synthetic_table("res://main.tscn");
+        let oracle = Oracle::new(&blob).unwrap();
+        let off = CHUNK - 16; // straddles the first/second chunk boundary
+        let mut data = vec![0x00u8; CHUNK + 4096];
+        data[off..off + KEY_LEN].copy_from_slice(&key);
+        let range = 0..data.len();
+        let hit = scan(&data, &oracle, std::slice::from_ref(&range), 1, Tier::Strict).unwrap();
+        assert_eq!(hit.offset as usize, off);
+        assert_eq!(hit.key, key);
+    }
+
+    #[test]
+    fn prefilter_rejects_low_entropy_but_keeps_real_keys() {
+        assert!(!passes_prefilter(&[0u8; KEY_LEN]));
+        assert!(!passes_prefilter(&[0xABu8; KEY_LEN]));
+        assert!(passes_prefilter(&[
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31
+        ]));
     }
 }
