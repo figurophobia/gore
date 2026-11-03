@@ -13,6 +13,12 @@ All notable changes to this project are documented here. The format follows
   reporting "no Godot pack found".
 * A **UTF-8 tier** in the key search, so a pack whose first file has a non-ASCII (accented or
   non-Latin) name no longer defeats automatic key recovery.
+* **Guidance for hardened engines (Godot Secure and similar).** When automatic key recovery
+  fails, `gore` now explains the likely cause — a key derived at runtime from a security token,
+  so it is never on disk verbatim — and points at the way through: scan a memory dump of the
+  running game with `--scan`. The AES-256-CFB builds keep Godot's framing and decrypt normally
+  once the key is found (the randomized pack magic is already handled); the Camellia option is
+  called out as unsupported.
 
 ### Changed
 

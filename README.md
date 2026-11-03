@@ -288,10 +288,15 @@ other stores). Real games run custom engine builds, so use the editor version GD
 * **APK is not supported.** Packs inside Android packages are not handled; point `gore` at a
   `.pck`, an executable or an extracted directory.
 * **Sparse bundle packs are rejected** with an explicit error rather than a confusing crash.
-* **Forks that change the cipher itself** (not just the key) are not decrypted. `gore` implements
-  Godot's own AES-256-CFB `FileAccessEncrypted` framing; a fork that swaps the algorithm, the
-  mode or the blob layout would need its specifics. Renaming the `GDPC` magic or hiding the key
-  is handled; changing the crypto is a different problem.
+* **Hardened engines (Godot Secure and similar).** These randomize the pack magic, embed a
+  32-byte security token in the engine, and derive the real key at runtime as a per-build
+  function of the token and the script key — so the key never appears on disk as 32 contiguous
+  bytes. `gore` handles the renamed magic by structure, and the **AES-256-CFB** builds keep
+  Godot's own `FileAccessEncrypted` framing, so once you have the derived key `gore` decrypts
+  them normally. The practical route is to scan a **memory dump** of the running game
+  (`gore extract game.pck --scan dump.bin`): the derived key lives in memory and the pack
+  oracle finds it. Builds switched to a **different cipher** (Godot Secure's Camellia-256
+  option) are not decrypted — that needs a Camellia implementation, not just the key.
 * **Custom engine builds.** Games can ship a patched Godot (Brotato uses 3.7.0 with a `steam`
   feature, Buckshot Roulette needs GodotSteam, Lucid Blocks a `double` precision build). The
   unpacking is unaffected; opening the project in the editor is not, and that is a limitation of

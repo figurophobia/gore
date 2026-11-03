@@ -503,7 +503,29 @@ fn recover_key(cli: &Cli, game: &Game) -> Result<Option<[u8; KEY_LEN]>> {
             return Ok(Some(hit.key));
         }
     }
+    print_key_recovery_help(&sources);
     Ok(None)
+}
+
+/// Printed when automatic key recovery fails: the usual causes and the one that actually has a
+/// way forward — a hardened engine (Godot Secure and similar) that derives the real key at
+/// runtime from a security token baked into the binary, so it is never in the file verbatim.
+fn print_key_recovery_help(sources: &[PathBuf]) {
+    eprintln!("* could not recover the key automatically. This usually means one of:");
+    if sources.is_empty() {
+        eprintln!("  - the key lives in the game executable, which was not found next to the pack");
+        eprintln!("    (pass it with --scan <path-to-executable>)");
+    } else {
+        eprintln!("  - the key is not stored verbatim in the scanned files. Some hardened engines");
+        eprintln!("    (e.g. Godot Secure) derive the real key at runtime from a 32-byte security");
+        eprintln!("    token compiled into the engine, so it never appears on disk as 32 contiguous");
+        eprintln!("    bytes. The derived key *does* exist in memory while the game runs: dump the");
+        eprintln!("    running process and scan the dump with --scan <dump>. gore decrypts the");
+        eprintln!("    standard AES-256-CFB these builds use (a renamed pack magic is already");
+        eprintln!("    handled); a build switched to a different cipher, such as Camellia, is not.");
+    }
+    eprintln!("  - the pack is not encrypted with a key at all (check `gore info`).");
+    eprintln!("* you can also pass a known key directly with --key <64-hex>.");
 }
 
 /// Small helper so the verification closure can borrow the game's data.
