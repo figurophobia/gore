@@ -480,8 +480,15 @@ fn recover_key(cli: &Cli, game: &Game) -> Result<Option<[u8; KEY_LEN]>> {
                 let whole = 0..data.len();
                 vec![whole]
             };
-            let hit =
-                keyfind::scan_verified(&data, &oracle, &scan_ranges, step, tier, prefilter, &verify);
+            let hit = keyfind::scan_verified(
+                &data,
+                &oracle,
+                &scan_ranges,
+                step,
+                tier,
+                prefilter,
+                &verify,
+            );
             if let Some(hit) = hit {
                 eprintln!(
                     "* key found at offset {} of {} ({:.1}s)",
@@ -518,11 +525,17 @@ fn print_key_recovery_help(sources: &[PathBuf]) {
     } else {
         eprintln!("  - the key is not stored verbatim in the scanned files. Some hardened engines");
         eprintln!("    (e.g. Godot Secure) derive the real key at runtime from a 32-byte security");
-        eprintln!("    token compiled into the engine, so it never appears on disk as 32 contiguous");
-        eprintln!("    bytes. The derived key *does* exist in memory while the game runs: dump the");
+        eprintln!(
+            "    token compiled into the engine, so it never appears on disk as 32 contiguous"
+        );
+        eprintln!(
+            "    bytes. The derived key *does* exist in memory while the game runs: dump the"
+        );
         eprintln!("    running process and scan the dump with --scan <dump>. gore decrypts the");
         eprintln!("    standard AES-256-CFB these builds use (a renamed pack magic is already");
-        eprintln!("    handled); a build switched to a different cipher, such as Camellia, is not.");
+        eprintln!(
+            "    handled); a build switched to a different cipher, such as Camellia, is not."
+        );
     }
     eprintln!("  - the pack is not encrypted with a key at all (check `gore info`).");
     eprintln!("* you can also pass a known key directly with --key <64-hex>.");

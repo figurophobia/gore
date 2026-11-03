@@ -149,9 +149,8 @@ pub fn extract(
             let has_md5 = entry.md5.iter().any(|&b| b != 0);
             let checksum_error = (has_md5
                 && (content.len() as u64 != entry.size || crypto::md5(&content) != entry.md5))
-            .then(|| entry.path.clone());
-            fs::write(abs, &content)
-                .with_context(|| format!("cannot write {}", abs.display()))?;
+                .then(|| entry.path.clone());
+            fs::write(abs, &content).with_context(|| format!("cannot write {}", abs.display()))?;
             Ok((decrypted, checksum_error))
         })
         .collect();

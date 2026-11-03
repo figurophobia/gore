@@ -383,7 +383,14 @@ mod tests {
         let mut data = vec![0x00u8; CHUNK + 4096];
         data[off..off + KEY_LEN].copy_from_slice(&key);
         let range = 0..data.len();
-        let hit = scan(&data, &oracle, std::slice::from_ref(&range), 1, Tier::Strict).unwrap();
+        let hit = scan(
+            &data,
+            &oracle,
+            std::slice::from_ref(&range),
+            1,
+            Tier::Strict,
+        )
+        .unwrap();
         assert_eq!(hit.offset as usize, off);
         assert_eq!(hit.key, key);
     }
