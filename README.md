@@ -137,6 +137,9 @@ Commands:
   key       Recover the pack encryption key
   extract   Extract the pack contents (decrypting them when needed)
   recover   Recover the full Godot project (needs GDRE Tools)
+  plugins   Restore the native GDExtension libraries of a recovered project for this platform
+  editor    Download the Godot editor a recovered project needs (.NET build for C# games)
+            and open the project with it
   setup     Download GDRE Tools (the project recovery backend)
 
 Options:
@@ -150,6 +153,16 @@ Options:
 
 `gore recover` takes the game file **or** an already extracted pack directory. The latter is
 what you need for games that ship extra packs (a DLC, a patch): see below.
+
+A game ships only the native plugin libraries for the platform it was exported for (a Windows
+build has only `.dll` files). After recovery, `gore` fills in the libraries this machine
+needs. It copies them from the game folder when they are there. Otherwise it downloads the
+upstream build of the plugins it knows: **FMOD**, **Spine** and **Sentry**.
+
+Open the result with `gore editor <project>`. It uses the exact Godot version of the game, and
+the **.NET build for C# games**. The regular build cannot load `.cs` scripts and reports them
+as *missing dependencies*. If no matching editor is installed, `gore` downloads it.
+Add `--templates` to also get the export templates.
 
 ### Examples
 

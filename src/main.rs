@@ -7,8 +7,10 @@ use gore::binfmt;
 use gore::crypto;
 use gore::extract;
 use gore::gdre;
+use gore::godot;
 use gore::keyfind;
 use gore::pck;
+use gore::plugins;
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -89,6 +91,39 @@ enum Command {
         /// Only print the command that would be run
         #[arg(long)]
         dry_run: bool,
+        /// Do not fetch the native libraries of GDExtension plugins (fmod, spine, ...)
+        #[arg(long)]
+        no_plugins: bool,
+    },
+    /// Restore the native GDExtension libraries of a recovered project for this platform
+    Plugins {
+        /// The recovered project
+        project: PathBuf,
+        /// Folder of the original game (searched for libraries before downloading)
+        #[arg(long, value_name = "DIR")]
+        game: Option<PathBuf>,
+    },
+    /// Download the Godot editor a recovered project needs (.NET build for C# games)
+    /// and open the project with it
+    Editor {
+        /// The recovered project
+        #[arg(default_value = ".")]
+        project: PathBuf,
+        /// Godot version to use instead of the detected one (e.g. 4.5.1)
+        #[arg(long, value_name = "VERSION")]
+        godot: Option<String>,
+        /// Force the .NET build (detected from the .csproj otherwise)
+        #[arg(long, conflicts_with = "no_mono")]
+        mono: bool,
+        /// Force the regular build
+        #[arg(long)]
+        no_mono: bool,
+        /// Also install the export templates (needed to export the game)
+        #[arg(long)]
+        templates: bool,
+        /// Install only, print the editor path instead of opening the project
+        #[arg(long)]
+        no_launch: bool,
     },
     /// Download GDRE Tools (the project recovery backend)
     Setup {
@@ -118,7 +153,26 @@ fn run() -> Result<()> {
         Command::Info { file, no_key } => cmd_info(&cli, file, *no_key),
         Command::Key { file } => cmd_key(&cli, file),
         Command::Extract { file } => cmd_extract(&cli, file),
-        Command::Recover { file, dry_run } => cmd_recover(&cli, file, *dry_run),
+        Command::Recover {
+            file,
+            dry_run,
+            no_plugins,
+        } => cmd_recover(&cli, file, *dry_run, *no_plugins),
+        Command::Plugins { project, game } => cmd_plugins(project, game.as_deref()),
+        Command::Editor {
+            project,
+            godot,
+            mono,
+            no_mono,
+            templates,
+            no_launch,
+        } => cmd_editor(
+            project,
+            godot.as_deref(),
+            mono.then_some(true).or(no_mono.then_some(false)),
+            *templates,
+            *no_launch,
+        ),
         Command::Setup { dir } => cmd_setup(&cli, dir.clone()),
     }
 }
@@ -300,7 +354,7 @@ fn cmd_extract(cli: &Cli, file: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_recover(cli: &Cli, file: &Path, dry_run: bool) -> Result<()> {
+fn cmd_recover(cli: &Cli, file: &Path, dry_run: bool, no_plugins: bool) -> Result<()> {
     let gdre_path = gdre::locate(cli.gdre.as_deref()).ok_or_else(|| {
         anyhow::anyhow!(
             "GDRE Tools was not found. Install it with `gore setup` or point at it with --gdre."
@@ -362,6 +416,149 @@ fn cmd_recover(cli: &Cli, file: &Path, dry_run: bool) -> Result<()> {
     }
     gdre::run(&gdre_path, &args)?;
     eprintln!("* project recovered into {}", out.display());
+
+    if !no_plugins {
+        let game_dir = if file.is_dir() {
+            None
+        } else {
+            target.parent().map(Path::to_path_buf)
+        };
+        restore_plugins(&out, game_dir.as_deref());
+    }
+    print_editor_hint(&out);
+    Ok(())
+}
+
+fn cmd_plugins(project: &Path, game: Option<&Path>) -> Result<()> {
+    if !project.join("project.godot").exists() {
+        bail!(
+            "{} is not a Godot project (no project.godot)",
+            project.display()
+        );
+    }
+    restore_plugins(project, game);
+    Ok(())
+}
+
+/// Fills in the native libraries GDExtension plugins need on this platform.
+fn restore_plugins(project: &Path, game_dir: Option<&Path>) {
+    let engine = godot::detect(project).map(|s| s.version);
+    let exts = plugins::find_extensions(project);
+    if exts.iter().all(|e| e.missing().is_empty()) {
+        return;
+    }
+    eprintln!("* restoring native plugin libraries for this platform");
+    for o in plugins::restore(project, game_dir, engine.as_deref()) {
+        if o.still_missing.is_empty() {
+            eprintln!(
+                "  {}: {} file(s) restored from {}",
+                o.name,
+                o.restored,
+                o.source.as_deref().unwrap_or("?")
+            );
+        } else {
+            eprintln!(
+                "  {}: still missing {} file(s), the plugin will not load in the editor:",
+                o.name,
+                o.still_missing.len()
+            );
+            for p in o.still_missing.iter().take(5) {
+                let shown = p.strip_prefix(project).unwrap_or(p);
+                eprintln!("    res://{}", shown.display());
+            }
+        }
+    }
+}
+
+/// Tells which editor opens the project, and how to get it.
+fn print_editor_hint(project: &Path) {
+    let Some(spec) = godot::detect(project) else {
+        return;
+    };
+    eprintln!(
+        "* open it with {}: gore editor {}",
+        spec.label(),
+        shell_quote(project)
+    );
+    if spec.mono {
+        eprintln!(
+            "  (C# project: the regular Godot build cannot load .cs scripts and reports \
+             them as missing dependencies, it must be the .NET build)"
+        );
+    }
+}
+
+fn shell_quote(p: &Path) -> String {
+    let s = p.display().to_string();
+    if s.chars()
+        .any(|c| c.is_whitespace() || "'\"$`\\".contains(c))
+    {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    } else {
+        s
+    }
+}
+
+fn cmd_editor(
+    project: &Path,
+    version: Option<&str>,
+    mono: Option<bool>,
+    templates: bool,
+    no_launch: bool,
+) -> Result<()> {
+    if !project.join("project.godot").exists() {
+        bail!(
+            "{} is not a Godot project (no project.godot)",
+            project.display()
+        );
+    }
+    let detected = godot::detect(project);
+    let version = match (version, &detected) {
+        (Some(v), _) => v.to_string(),
+        (None, Some(d)) => d.version.clone(),
+        (None, None) => {
+            bail!("cannot tell which Godot version this project needs, pass it with --godot")
+        }
+    };
+    let mono = mono
+        .or(detected.as_ref().map(|d| d.mono))
+        .unwrap_or_else(|| godot::is_mono(project));
+    let spec = godot::EditorSpec { version, mono };
+
+    let editor = match godot::find_system(&spec) {
+        Some(bin) => bin,
+        None => godot::ensure_editor(&spec)?,
+    };
+    eprintln!("* {}: {}", spec.label(), editor.display());
+    if templates {
+        let dir = godot::ensure_templates(&spec, &editor)?;
+        eprintln!("* export templates: {}", dir.display());
+    }
+    if spec.mono
+        && std::process::Command::new("dotnet")
+            .arg("--version")
+            .output()
+            .map(|o| !o.status.success())
+            .unwrap_or(true)
+    {
+        eprintln!(
+            "* warning: the .NET SDK (`dotnet`) was not found; the editor needs it to build \
+             the C# scripts"
+        );
+    }
+    if no_launch {
+        println!("{}", editor.display());
+        return Ok(());
+    }
+    let project = std::fs::canonicalize(project)?;
+    eprintln!("* opening {}", project.display());
+    std::process::Command::new(&editor)
+        .arg("--editor")
+        .arg("--path")
+        .arg(&project)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("cannot start {}", editor.display()))?;
     Ok(())
 }
 
@@ -391,12 +588,7 @@ fn sibling_packs(target: &Path) -> Option<Vec<String>> {
 }
 
 fn cmd_setup(cli: &Cli, dir: Option<PathBuf>) -> Result<()> {
-    let dest = dir.unwrap_or_else(|| {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        home.join(".local/share/gore")
-    });
+    let dest = dir.unwrap_or_else(gore::download::data_dir);
     let installed = gdre::download_latest(&dest)?;
     println!("{}", installed.display());
     let _ = cli;

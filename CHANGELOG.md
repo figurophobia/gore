@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+* **Native GDExtension plugins are restored for the host platform.** After recovery, `gore`
+  reads every `.gdextension`, copies the libraries it can find in the game folder and downloads
+  the missing ones for known plugins: FMOD (utopia-rise/fmod-gdextension, matched to the Godot
+  version), Spine (spine-godot GDExtension builds) and Sentry (the exact version the game
+  shipped). Also available on its own as `gore plugins <project> [--game <dir>]`; skip it with
+  `gore recover --no-plugins`.
+* **`gore editor [project]`** opens a recovered project with the Godot version it needs. It
+  picks the .NET build for C# projects, because the regular build cannot load `.cs` scripts
+  and reports them as missing dependencies. It uses a matching system editor (`godot-mono`,
+  `godot`) when there is one, and otherwise downloads the official build into
+  `~/.local/share/gore/godot`. `--templates` also installs the export templates, and
+  `--godot <version>` overrides the detected version.
+
+### Fixed
+
+* The GDRE Tools progress bar no longer jumps around. Its output is now drawn by `gore`: the bar
+  stays on one line cut to the terminal width, and messages written into the middle of it
+  (errors, `dotnet --version`) go above it. Tasks that GDRE runs in parallel (exporting
+  resources, compiling the C# project, generating the filesystem cache) used to overwrite
+  each other's bar; they are now shown side by side on that line.
+
 ## [0.4.0] — 2026-11-03
 
 ### Added
