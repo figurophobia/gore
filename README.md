@@ -262,7 +262,7 @@ building custom export templates, so almost every commercial Godot game ships un
 | v0 | Godot 2.x | pack generated with GDRE Tools (Godot 2.1 writes `0.0.0` in the header, so detection relies on the magic and the table sanity) |
 | v1 | Godot 3.x | **Brotato** (3.7.0, 7416 files) |
 | v2 | Godot 4.x | **Buckshot Roulette** (4.1.1, 3572 files, self contained exe) |
-| v3 | Godot 4.x | **Lucid Blocks** (4.6.0, 5951 files) |
+| v3 | Godot 4.x | **Lucid Blocks** (4.6.0, 5951 files), **Slay the Spire 2** (4.5.1, 15890 files, C#) |
 | v4 | Godot 4.x | **SNAPTIC Demo** (4.7.1, 7756 files, encrypted) |
 
 **Containers**
@@ -285,14 +285,20 @@ file verified after decryption. A wrong key fails loudly instead of writing garb
 
 | Game | Engine | Pack | Encrypted | Result |
 |---|---|---|---|---|
-| SNAPTIC Demo | 4.7.1 | v4 | yes | key recovered automatically, 7756 files verified |
+| Slay the Spire 2 | 4.5.1 (.NET) | v3 | no | 15890 files verified, 3591 C# scripts decompiled and the project builds; FMOD, Spine and Sentry restored for Linux; opens in the 4.5.1 .NET editor and runs to the main menu |
+| SNAPTIC Demo | 4.7.1 | v4 | yes | key recovered automatically, 7756 files verified; runs, without its private `theora_mosh` datamosh effect (Windows-only native plugin) |
 | Lucid Blocks | 4.6.0 | v3 | no | 5951 files verified |
 | Buckshot Roulette | 4.1.1 | v2 | no | self contained exe, 3572 files verified |
 | Brotato | 3.7.0 | v1 | no | base pack + DLC pack merged, 9285 files verified |
 
 Every one of them was recovered into a project with no broken references, apart from the
 dangling references the games themselves ship (unused `tests/` folders, GDNative bindings for
-other stores). Real games run custom engine builds, so use the editor version GDRE reports.
+other stores). Real games run custom engine builds, so use the editor version GDRE reports
+(`gore editor` does it for you).
+
+In Slay the Spire 2, GDRE reports 7 C# scripts as not decompiled. Their classes are not in the
+shipped `sts2.dll`: they are dev console commands, a test runner and other files the game left
+out of its release build, so there is nothing to recover. Nothing references them.
 
 ---
 
@@ -346,7 +352,10 @@ Layout:
 | `src/keyfind.rs` | the oracle based key search, tiers and wordlist |
 | `src/extract.rs` | extraction, decryption, MD5 verification, path sanitising |
 | `src/binfmt.rs` | PE/ELF section parsing for the key search |
-| `src/gdre.rs` | GDRE Tools lookup and download |
+| `src/gdre.rs` | GDRE Tools lookup, download and output rendering |
+| `src/plugins.rs` | restoring native GDExtension libraries (FMOD, Spine, Sentry, game folder) |
+| `src/godot.rs` | editor version detection, editor and export template download |
+| `src/download.rs` | HTTP downloads with progress and a cache |
 | `src/main.rs` | the CLI |
 
 ## License
