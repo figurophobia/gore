@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-05
+
 ### Added
 
 * **Native GDExtension plugins are restored for the host platform.** After recovery, `gore`
@@ -150,7 +152,9 @@ All notable changes to this project are documented here. The format follows
 * SNAPTIC Demo: Godot 4.7.1, pack `v4`, encrypted, key recovered automatically, 7756 files.
 * Lucid Blocks: Godot 4.6.0, pack `v3`, 5951 files.
 
-[Unreleased]: https://github.com/figurophobia/gore/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/figurophobia/gore/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/figurophobia/gore/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/figurophobia/gore/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/figurophobia/gore/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/figurophobia/gore/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/figurophobia/gore/compare/v0.3.0...v0.3.1
